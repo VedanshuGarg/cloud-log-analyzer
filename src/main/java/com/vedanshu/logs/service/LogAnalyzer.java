@@ -24,7 +24,7 @@ public class LogAnalyzer {
         int cores = Runtime.getRuntime().availableProcessors();
         ExecutorService executor = Executors.newFixedThreadPool(cores);
 
-        System.out.println("🚀 Starting parallel analysis (BATCH MODE) on " + cores + " cores...");
+        System.out.println("Starting parallel analysis (BATCH MODE) on " + cores + " cores...");
         long startTime = System.currentTimeMillis();
 
         try (BufferedReader reader = new BufferedReader(new FileReader(FILE_PATH))) {
