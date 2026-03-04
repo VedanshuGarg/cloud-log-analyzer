@@ -6,12 +6,15 @@ import com.vedanshu.logs.util.LogParser;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class LogAnalyzer {
 
     private static final String FILE_PATH = "server_logs.txt";
+    private static final int BATCH_SIZE = 10_000;
 
     private final AtomicInteger totalRequests = new AtomicInteger(0);
     private final AtomicInteger errorCount = new AtomicInteger(0);
@@ -21,23 +24,33 @@ public class LogAnalyzer {
         int cores = Runtime.getRuntime().availableProcessors();
         ExecutorService executor = Executors.newFixedThreadPool(cores);
 
-        System.out.println("Starting parallel analysis on " + cores + " cores...");
+        System.out.println("🚀 Starting parallel analysis (BATCH MODE) on " + cores + " cores...");
         long startTime = System.currentTimeMillis();
 
         try (BufferedReader reader = new BufferedReader(new FileReader(FILE_PATH))) {
             String line;
-            // 1. Read line-by-line
-            while ((line = reader.readLine()) != null) {
-                final String logLine = line;
+            List<String> batch = new ArrayList<>(BATCH_SIZE);
 
-                // 2. Hand the line to a background thread to parse and count
-                executor.submit(() -> processLine(logLine));
+            while ((line = reader.readLine()) != null) {
+                batch.add(line);
+
+                // When the bucket is full, hand it to a worker thread
+                if (batch.size() == BATCH_SIZE) {
+                    List<String> workerBatch = new ArrayList<>(batch);
+                    executor.submit(() -> processBatch(workerBatch));
+                    batch.clear(); // Empty the bucket for the next lines
+                }
             }
+
+            if (!batch.isEmpty()) {
+                List<String> workerBatch = new ArrayList<>(batch);
+                executor.submit(() -> processBatch(workerBatch));
+            }
+
         } catch (IOException e) {
             System.err.println("Failed to read file: " + e.getMessage());
         }
 
-        // 3. Tell threads to finish up, and wait for them
         executor.shutdown();
         try {
             executor.awaitTermination(1, TimeUnit.MINUTES);
@@ -49,22 +62,22 @@ public class LogAnalyzer {
         printReport(endTime - startTime);
     }
 
-    // This method is called by multiple threads simultaneously
-    private void processLine(String line) {
-        LogEntry entry = LogParser.parse(line);
-        if (entry == null) return;
+    // New method: Processes a whole chunk at once
+    private void processBatch(List<String> lines) {
+        for (String line : lines) {
+            LogEntry entry = LogParser.parse(line);
+            if (entry == null) continue;
 
-        totalRequests.incrementAndGet();
-
-        if (entry.statusCode() >= 500) {
-            errorCount.incrementAndGet();
+            totalRequests.incrementAndGet();
+            if (entry.statusCode() >= 500) {
+                errorCount.incrementAndGet();
+            }
+            endpointTraffic.computeIfAbsent(entry.endpoint(), k -> new AtomicInteger(0)).incrementAndGet();
         }
-
-        endpointTraffic.computeIfAbsent(entry.endpoint(), k -> new AtomicInteger(0)).incrementAndGet();
     }
 
     private void printReport(long durationMs) {
-        System.out.println("\n --- LOG ANALYSIS REPORT ---");
+        System.out.println("\n--- LOG ANALYSIS REPORT ---");
         System.out.println("Time taken: " + durationMs + " ms");
         System.out.println("Total Requests Processed: " + totalRequests.get());
         System.out.println("5xx Server Errors: " + errorCount.get());
